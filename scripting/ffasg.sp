@@ -2,12 +2,15 @@
 #include <sdktools>
 #include <sourcemod>
 #include <build>
+#include <tf2>
 #pragma newdecls required
 #pragma semicolon 1
 
 char mapName[32];
-
+int pointTracker[MAXPLAYERS + 1];
 int clientOnPoint;
+
+ConVar cv_instantSpawn;
 
 public Plugin myinfo =
 {
@@ -29,9 +32,18 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 
 public void OnPluginStart()
 {
-	SDKHook(FindEntityByClassname(-1, "trigger_capture_area"), SDKHook_StartTouchPost, OnTouch);
-	SDKHook(FindEntityByClassname(-1, "trigger_capture_area"), SDKHook_EndTouchPost, EndTouch);
+	cv_instantSpawn = CreateConVar("ffa_instantrespawn", "1", "Enable/Disable Instant Respawn.", _, true, 0.0, true, 1.0);
+	HookEvent("player_death", hookPlayerDie, EventHookMode_Post);
 	// HookEvent("round_start", OnRoundStart, EventHookMode_PostNoCopy);
+}
+
+public void OnEntityCreated(int entity, const char[] classname)
+{
+	if(entity > MaxClients && IsValidEntity(entity) && StrEqual(classname, "trigger_capture_area"))
+    {
+		SDKHook(entity, SDKHook_StartTouchPost, OnTouch);
+		SDKHook(entity, SDKHook_EndTouchPost, EndTouch);
+    }
 }
 
 // public void OnRoundStart(Handle event, const char[] name, bool dontBroadcast)
@@ -51,6 +63,11 @@ public void OnPluginStart()
 //             break;
 //     }
 // } 
+
+public void OnClientPutInServer(int client)
+{
+	pointTracker[client] = 0;
+}
 
 public void OnMapStart()
 {	
@@ -99,10 +116,65 @@ public Action DisplayHud(Handle timer)
 	for(int i = 1; i <= MAXPLAYERS; i++) if (Build_IsClientValid(i, i))
 	{
 
+		int highestDamage = 0;
+		int highestDamageClient = -1;
+		
+
+		if (IsClientInGame(i) && GetCurrentPoints(i) > highestDamage)
+		{
+			highestDamage = GetCurrentPoints(i);
+			highestDamageClient = i;
+			
+		}
+
+		int secondHighestDamage = 0;
+		int secondHighestDamageClient = -1;
+
+		for (int z = 1; z <= MaxClients; z++)
+		{
+			if (IsClientInGame(z) && GetCurrentPoints(z) > secondHighestDamage && z != highestDamageClient)
+			{
+				secondHighestDamage = GetCurrentPoints(z);
+				secondHighestDamageClient = z;
+			}
+		}
+
+		int thirdHighestDamage = 0;
+		int thirdHighestDamageClient = -1;
+		
+		for (int z = 1; z <= MaxClients; z++)
+		{
+			if (IsClientInGame(z) && GetCurrentPoints(z) > thirdHighestDamage && z != highestDamageClient && z != secondHighestDamageClient)
+			{
+				thirdHighestDamage = GetCurrentPoints(z);
+				thirdHighestDamageClient = z;
+			}
+		}
+
+		char highestDamageName[32];
+		char secondhighestDamageName[32];
+		char thirdhighestDamageName[32];
+
 		SetHudTextParams(-9.5, 0.01, 0.01, 0, 255, 255, 255, 0, 1.0, 0.5, 0.5);
-		ShowHudText(i, -1, "%s", "Person1: 0", i);
-		ShowHudText(i, -1, "%s", "\nPerson2: 0", i);
-		ShowHudText(i, -1, "%s", "\n\nPerson3: 0", i);
+
+		if(Build_IsClientValid(highestDamageClient, highestDamageClient))
+		{
+			GetClientName(highestDamageClient, highestDamageName, sizeof(highestDamageName));
+			ShowHudText(i, -1, "%s: %i", highestDamageName, highestDamage);
+		}
+
+		if(Build_IsClientValid(secondHighestDamageClient, secondHighestDamageClient))
+		{
+			GetClientName(secondHighestDamageClient, secondhighestDamageName, sizeof(secondhighestDamageName));
+			ShowHudText(i, -1, "\n%s: %i", secondhighestDamageName, secondHighestDamage);
+		}
+
+		if(Build_IsClientValid(thirdHighestDamageClient, thirdHighestDamageClient))
+		{
+			GetClientName(thirdHighestDamageClient, thirdhighestDamageName, sizeof(thirdhighestDamageName));
+			ShowHudText(i, -1, "\n\n%s: %i", thirdhighestDamageName, thirdhighestDamageName);
+		}
+		
 		if (clientOnPoint > 0) {
 			char buffer[32];
 			GetClientName(i, buffer, sizeof(buffer));
@@ -142,4 +214,37 @@ public int Native_IsClientValid(Handle hPlugin, int iNumParams)
 		}
 	}
 	return true;
+}
+
+public Action hookPlayerDie(Event event, const char[] name, bool dontBroadcast)
+{
+	int attackerId = event.GetInt("attacker");
+	int victimId = event.GetInt("userid");
+
+	if(attackerId == victimId)
+		return;
+	pointTracker[GetClientOfUserId(attackerId)] = pointTracker[GetClientOfUserId(attackerId)] + 1;
+
+	RequestFrame(Respawn, GetClientSerial(GetClientOfUserId(victimId)));
+}
+
+public int GetCurrentPoints(int client)
+{
+	return pointTracker[client];
+}
+
+public void Respawn(any serial)
+{
+	if(cv_instantSpawn.IntValue == 1)
+	{
+		int client = GetClientFromSerial(serial);
+		if(client != 0)
+		{
+			int team = GetClientTeam(client);
+			if(!IsPlayerAlive(client) && team != 1)
+			{
+				TF2_RespawnPlayer(client);
+			}
+		}
+	}
 }
